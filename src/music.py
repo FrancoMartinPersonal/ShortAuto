@@ -208,13 +208,19 @@ def openverse_search_audio(
 def pick_and_download_openverse(
     q_list=None,
     out="music.mp3",
-    min_dur=20,
-    max_dur=90,
+    min_dur=20,   # en segundos
+    max_dur=90,   # en segundos
 ):
     """
-    Elige al azar entre varias queries. Prefiere resultados con duración 20–90s.
-    Devuelve (ruta_mp3, metadatos_dict).
+    Elige al azar entre varias queries (synthwave/retrowave, etc.),
+    prefiere resultados con duración entre 20–90s,
+    descarga el mejor candidato y devuelve (ruta_mp3, metadatos_dict).
+    Requiere que `openverse_search_audio(q=...)` exista y devuelva el JSON
+    con "results" (cada item con duration en ms, url y alt_files).
     """
+    import json, random
+    from pathlib import Path
+
     q_list = q_list or [
         "synthwave",
         "retrowave",
@@ -223,46 +229,102 @@ def pick_and_download_openverse(
         "chiptune 80s",
     ]
     random.shuffle(q_list)
+
+    def _pick_candidates(results, min_sec, max_sec):
+        """Arma [(item, url)] usando alt_files/url y duración en ms."""
+        candidates = []
+        for it in results:
+            dur_ms = it.get("duration") or 0
+            dur_s = dur_ms / 1000.0
+            if not (min_sec <= dur_s <= max_sec):
+                continue
+
+            urls = []
+            alts = it.get("alt_files") or []
+            if alts:
+                # ordenar variantes por bitrate/sample/filesize (desc)
+                alts_sorted = sorted(
+                    [a for a in alts if a.get("url")],
+                    key=lambda a: (
+                        (a.get("bit_rate") or 0),
+                        (a.get("sample_rate") or 0),
+                        (a.get("filesize") or 0),
+                    ),
+                    reverse=True,
+                )
+                urls.extend([a["url"] for a in alts_sorted])
+
+            if it.get("url"):
+                urls.append(it["url"])
+
+            # elegir la primera “reproducible” (MP3 / mp32 / genérica de audio)
+            chosen = None
+            for u in urls:
+                ul = u.lower()
+                if (".mp3" in ul) or ("format=mp3" in ul) or ("format=mp32" in ul) or ("/audio/" in ul):
+                    chosen = u
+                    break
+            if not chosen and urls:
+                chosen = urls[0]  # último recurso
+
+            if chosen:
+                candidates.append((it, chosen))
+        return candidates
+
     last_err = None
     for q in q_list:
         try:
-            results = openverse_search_audio(q=q)
-            candidates = []
-            for it in results:
-                dur = it.get("duration") or 0
-                files = it.get("files") or []
-                # buscar archivo reproducible (mp3 o similar)
-                mp3s = [f for f in files if "mp3" in (f.get("filetype","").lower())]
-                if min_dur <= dur <= max_dur and mp3s:
-                    mp3s.sort(key=lambda f: f.get("bitrate", 0) or 0, reverse=True)
-                    candidates.append((it, mp3s[0]["url"]))
+            # Debe devolver dict con clave "results"
+            data = openverse_search_audio(q=q)
+            candidates = _pick_candidates(data, min_dur, max_dur)
+
+            # fallback: si no hubo candidatos por duración/alt_files, tomar el primero con url
+            if not candidates:
+                for it in data:
+                    if it.get("url"):
+                        candidates = [(it, it["url"])]
+                        break
+
             if not candidates:
                 continue
+
             meta, url = random.choice(candidates)
-            print(f"[openverse] elegido: {meta.get('title')} – {meta.get('creator')} :: {url}")
+            title = meta.get("title")
+            creator = meta.get("creator")
+            print(f"[openverse] elegido: {title} – {creator} :: {url}")
+
             with requests.get(url, headers={"User-Agent": UA}, stream=True, timeout=60) as resp:
                 resp.raise_for_status()
                 with open(out, "wb") as f:
                     for chunk in resp.iter_content(1 << 20):
-                        if chunk: f.write(chunk)
-            # devolvemos metadatos útiles (p/atribución si hiciera falta)
+                        if chunk:
+                            f.write(chunk)
+
+            # guarda metadatos útiles para atribución
             meta_out = {
                 "title": meta.get("title"),
                 "creator": meta.get("creator"),
                 "license": meta.get("license"),
+                "license_url": meta.get("license_url"),
+                "source": meta.get("source"),
+                "provider": meta.get("provider"),
                 "landing": meta.get("foreign_landing_url"),
-                "source_url": url,
-                "duration": meta.get("duration"),
+                "detail_url": meta.get("detail_url"),
+                "duration_ms": meta.get("duration"),
+                "picked_url": url,
+                "query": q,
             }
             Path(out).with_suffix(".json").write_text(
                 json.dumps(meta_out, ensure_ascii=False, indent=2),
                 encoding="utf-8"
             )
             return out, meta_out
+
         except requests.HTTPError as e:
             last_err = e
             print("[openverse] HTTPError:", e)
         except Exception as e:
             last_err = e
             print("[openverse] error:", e)
+
     raise last_err or RuntimeError("No se pudo descargar música desde Openverse")

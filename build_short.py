@@ -254,10 +254,22 @@ def srt_words_faster_whisper(audio_path, out_srt, model_size="medium", language=
     return out_srt
 
 
-def burn_subs(input_mp4="tmp_base.mp4", srt="voz.srt", out="short_final.mp4"):
-    # quemado con estilo
+def burn_subs(input_mp4="tmp_with_music.mp4", srt="voz_words.srt", out="short_final.mp4"):
+    out = str(Path(out).with_suffix(".mp4"))
+
+    # estilo ASS
     style = f"Fontsize={FONT_SIZE},Outline={OUTLINE},Shadow={SHADOW},MarginV={MARGIN_V}"
-    cmd = rf'''ffmpeg -y -i "{input_mp4}" -vf "subtitles='{srt}':force_style='{style}'" -c:a copy "{out}"'''
+
+    # Ruta absoluta en formato POSIX y ESCAPE de caracteres problemáticos para FFmpeg filtergraph
+    srt_posix = Path(srt).resolve().as_posix()
+    # En filtros de FFmpeg, ':' separa opciones, así que hay que escaparlo como '\:'
+    # También escapamos comillas simples por seguridad.
+    srt_escaped = srt_posix.replace(":", r"\:").replace("'", r"\'")
+
+    # Importante: poner el filename entre comillas simples dentro del filtro
+    vf = f"subtitles='{srt_escaped}':force_style='{style}'"
+
+    cmd = f'''ffmpeg -y -i "{input_mp4}" -vf "{vf}" -c:a copy "{out}"'''
     run(cmd)
     return out
 
@@ -290,7 +302,9 @@ def burn_subs_with_music(
 if __name__ == "__main__":
     audio = "voz.mp3"
     from datetime import datetime
-    fn_name = f"short-{datetime.now().strftime("%Y-%m-%d%H%M%S")}"
+
+    ts = time.strftime("%Y-%m-%d%H%M%S")
+    fn_name = f"short-{ts}.mp4"
     # 1) SRT base para escenas (b-roll contextual por frase)
     srt_original = ensure_srt(audio, "voz.srt")
     segs_raw = parse_srt(srt_original)
