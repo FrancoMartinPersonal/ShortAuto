@@ -1,11 +1,12 @@
 from pathlib import Path
 import os, re, math, random, unicodedata,datetime, pprint
-import requests
+import requests, time
 from dotenv import load_dotenv
 from moviepy.editor import VideoFileClip, AudioFileClip, ColorClip, concatenate_videoclips, vfx
 from moviepy.editor import ImageClip  # <-- NUEVO
 from glob import glob                 # <-- NUEVO
 from sentence_transformers import SentenceTransformer, util
+from src.image_ai import generate_image_hf
 
 
 
@@ -194,9 +195,11 @@ def keywords_from_text(text, k=3):
             uniq.append(w)
     return uniq[:k]
 
+
 def build_video_from_segments(segs, audio_path="voz.mp3"):
     tmp_dir = Path("tmp_broll"); tmp_dir.mkdir(exist_ok=True)
     clips = []
+    used_urls = set()   # ← SOLO para este render (videos y fotos)
     last_ok_clip = None  # para reusar si falla
 
     for i, s in enumerate(segs):
@@ -205,11 +208,26 @@ def build_video_from_segments(segs, audio_path="voz.mp3"):
 
         base = None
 
+
+        # === IA FIRST SCENE (sólo primera frase) ===
+        if i == 0:
+            try:
+                ia_path = generate_image_hf(s["text"], out_path=str(tmp_dir / "ia_first.jpg"))
+                base = make_photo_clip(ia_path, dur)  # tu helper para fotos → clip
+                print("[ia] Imagen generada para la primera frase")
+            except Exception as e:
+                print("[warn] IA image failed:", e)
+        # === /IA FIRST SCENE ===
+
+        # ==== VIDEOS ====
         for q in queries:
             try:
                 urls = pexels_search(q, n=5)
             except Exception as e:
                 print("[warn] pexels:", e); urls = []
+
+            # no repetir dentro del mismo render
+            urls = [u for u in urls if u not in used_urls]
 
             for j, url in enumerate(urls):
                 local = tmp_dir / f"seg{i}_{j}.mp4"
@@ -217,13 +235,13 @@ def build_video_from_segments(segs, audio_path="voz.mp3"):
                     download(url, str(local))
                     cand = VideoFileClip(str(local))
                     cand = fit_vertical(cand)
-                    # ajustar duración (loop o recorte)
                     if cand.duration < dur:
                         reps = math.ceil(dur / cand.duration)
                         cand = concatenate_videoclips([cand]*reps).subclip(0, dur)
                     else:
                         cand = cand.subclip(0, dur)
                     base = cand
+                    used_urls.add(url)  # ← marcar como usado
                     break
                 except Exception as e:
                     print(f"[warn] fallo descarga/clip ({url}): {e}")
@@ -236,15 +254,20 @@ def build_video_from_segments(segs, audio_path="voz.mp3"):
                     purls = pexels_photos_search(q, n=5)
                 except Exception as e:
                     print("[warn] pexels photos:", e); purls = []
+
+                purls = [u for u in purls if u not in used_urls]  # ← filtrar
+
                 for j, purl in enumerate(purls):
                     local_img = tmp_dir / f"seg{i}_{j}.jpg"
                     try:
                         download(purl, str(local_img))
                         photo_base = make_photo_clip(str(local_img), dur)
+                        used_urls.add(purl)  # ← marcar como usada
                         break
                     except Exception as e:
                         print(f"[warn] fallo foto ({purl}): {e}")
                 if photo_base: break
+
             if photo_base:
                 base = photo_base
         # Fallbacks sólidos para evitar negro

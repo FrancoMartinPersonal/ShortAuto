@@ -106,7 +106,7 @@ def pick_and_download_openverse(queries=("synthwave","retrowave","outrun","80s e
     raise last_err or RuntimeError("No se pudo descargar música desde Openverse")
 
 def mix_music_into_video(video_in="tmp_base.mp4", music="music.mp3", out="short_with_music.mp4",
-                         music_db=-18, ducking_db=-6):
+                         music_db=-30, ducking_db=-5):
     """
     - Normaliza música a ~-18 LUFS y la baja unos dB (ducking simple)
     - Mantiene el audio original (voz) del video.
@@ -218,15 +218,11 @@ def pick_and_download_openverse(
     Requiere que `openverse_search_audio(q=...)` exista y devuelva el JSON
     con "results" (cada item con duration en ms, url y alt_files).
     """
-    import json, random
-    from pathlib import Path
+
 
     q_list = q_list or [
         "synthwave",
-        "retrowave",
         "80s electronic",
-        "outrun",
-        "chiptune 80s",
     ]
     random.shuffle(q_list)
 

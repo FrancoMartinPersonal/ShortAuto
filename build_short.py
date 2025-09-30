@@ -10,7 +10,7 @@ import re
 
 LANG = "es"  # idioma whisper
 WHISPER_MODEL = "medium"  # tiny/base/small/medium/large (elige según tu PC)
-FONT_SIZE = 12
+FONT_SIZE = 18
 MARGIN_V = 120
 OUTLINE = 1
 SHADOW = 1
